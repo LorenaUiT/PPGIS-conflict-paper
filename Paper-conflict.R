@@ -102,25 +102,28 @@ preferences.mvformula<-mvformula(preferences~origin)
 plot(preferences.mvformula)
 
 
-####
+
+
 ##### PLACE VALUES #####
 ####
 #### Create polygons with points that are nearby for each user group 
 window<-as.owin(PAbufferdis) ## we need to create an observation window to delimit the study area
-m<-pointES.values@data[,c(1,6,11)] # We put origin as marks, so we are able to identify areas of different user groups
+m<-pointES.values@data[,c(6,11)] # We put origin as marks, so we are able to identify areas of different user groups
+m<-droplevels(m)
+## Warning: there are duplicated points in pointES.values that appear if marks="m" is not included in the model(it's a common thing)
+
 pointES.values.ppp<-ppp(x=pointES.values@coords[,1],y=pointES.values@coords[,2], window = window,marks = m)
+is.multitype(pointES.values.ppp) ##Says true when there is a single mark
 pointES.values.ppp$n/sum(sapply(slot(PAbufferdis, "polygons"), slot, "area")) ### Calculates average intensity of markers
 plot(pointES.values.ppp)
 plot(Kest(pointES.values.ppp)) ## How do I interpret this???
 
-## Errors: there are duplicated points in pointES.values that appear if marks="m" is not included in the model
-# solved vy including field_1, which are unique identifiers (I think)
-
+### STEP 1: Overal distribution of values
 plot(density(pointES.values.ppp,1000))
 persp(density(pointES.values.ppp,1000))
-plot(density(pointES.values.ppp[pointES.values.ppp$marks$origin=="Local"],1000))
-plot(density(pointES.values.ppp[pointES.values.ppp$marks$origin=="Domestic"],1000))
-plot(density(pointES.values.ppp[pointES.values.ppp$marks$origin=="International"],1000))
+plot(density(pointES.values.ppp[pointES.values.ppp$marks$origin=="Local"],1000),main = "Local's place value distribution")
+plot(density(pointES.values.ppp[pointES.values.ppp$marks$origin=="Domestic"],1000),main = "Domestic's place value distribution")
+plot(density(pointES.values.ppp[pointES.values.ppp$marks$origin=="International"],1000),main = "International's place value distribution")
 
 ## Kolmogorov-Smirnov test to compare expected and observed distributions of x and y
 # kstest is out of date, R recomends using cdf.test instead
@@ -129,9 +132,7 @@ plot(cdf.test(pointES.values.ppp, function(x, y) {x}))
 cdf.test(pointES.values.ppp, function(x, y) {y}) ## Rejects H0, therefore expected and observed distributions of y are different
 plot(cdf.test(pointES.values.ppp, function(x, y) {y}))
 
-## We cannot use MLE for poisson because our points are not completely independent (is this right?)
-## MLE tests covariates?
-
+###STEP 2: Segregation of values
 ### Nearest neighbour distances
 ave(Gest(pointES.values.ppp[pointES.values.ppp$marks$origin=="Local"])$r) #Result: 1523.188
 plot(Gest(pointES.values.ppp[pointES.values.ppp$marks$origin=="Local"])) #Cumulative distribution function of the nearest-neighbour distance
@@ -146,6 +147,72 @@ plot(Gest(pointES.values.ppp[pointES.values.ppp$marks$origin=="International"]))
 
 
 
+## We cannot use MLE for poisson because our points are not completely independent (is this right?)
+## MLE tests covariates?
+
+## Handling point patterns with marks:
+MarkCorrValues<-markcrosscorr(pointES.values.ppp,correction = "translate",method = "density")
+plot(MarkCorrValues) ## Can't understand what it means
+
+#### WORKING HERE!!
+###STEP 3: Identify overlaping hotspots
+library(chemometrics)
+
+require(robustbase)
+pointES.values.ppp.xy<-cbind(pointES.values.ppp$x,pointES.values.ppp$y)
+values.mcd=covMcd(pointES.values.ppp.xy)
+drawMahal(pointES.values.ppp.xy,center=values.mcd$center,covariance=values.mcd$cov,quantile=0.5)
+
+
+
+
+
+
+##### DEVELOPMENT PREFERENCES #####
+####
+#### Create polygons with points that are nearby for each user group 
+window<-as.owin(PAbufferdis) ## we need to create an observation window to delimit the study area
+m1<-pointES.pref@data[,c(6,7,11)] # We put origin as marks, so we are able to identify areas of different user groups
+m1<-droplevels(m1)
+## Warning: there are duplicated points in pointES.pref that appear if marks="m" is not included in the model(it's a common thing)
+
+pointES.pref.ppp<-ppp(x=pointES.pref@coords[,1],y=pointES.pref@coords[,2], window = window,marks = m1)
+is.multitype(pointES.pref.ppp) ##Says true when there is a single mark
+pointES.pref.ppp$n/sum(sapply(slot(PAbufferdis, "polygons"), slot, "area")) ### Calculates average intensity of markers
+plot(pointES.pref.ppp)
+plot(Kest(pointES.pref.ppp)) ## How do I interpret this???
+
+
+### STEP1: Overal distribution of preferences
+plot(density(pointES.pref.ppp,1000))
+persp(density(pointES.pref.ppp,1000))
+plot(density(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Local"],1000),main = "Local's development preference distribution")
+plot(density(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Domestic"],1000),main = "Domestic's development preference distribution")
+plot(density(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="International"],1000),main = "International's development preference distribution")
+
+## Kolmogorov-Smirnov test to compare expected and observed distributions of x and y
+# kstest is out of date, R recomends using cdf.test instead
+cdf.test(pointES.pref.ppp, function(x, y) {x}) ## Rejects H0, therefore expected and observed distributions of x are different
+plot(cdf.test(pointES.pref.ppp, function(x, y) {x}))
+cdf.test(pointES.pref.ppp, function(x, y) {y}) ## Rejects H0, therefore expected and observed distributions of y are different
+plot(cdf.test(pointES.pref.ppp, function(x, y) {y}))
+
+
+###STEP 2: Segregation of preferences
+### Nearest neighbour distances
+ave(Gest(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Local"])$r) #Result: 3645.003
+plot(Gest(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Local"])) #Cumulative distribution function of the nearest-neighbour distance
+ave(Gest(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Domestic"])$r) #Result: 3584.249
+plot(Gest(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Domestic"]))
+ave(Gest(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="International"])$r) #Result: 3308.618
+plot(Gest(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="International"]))
+# Development preferences by international tourists are the ones with the shorterst avegare distance between neighbouring points
+# This may mean that international tourists have a lower dispersion than Locals (highest average distance between points)
+# Plots show that bG(r) > Gpois(r) suggest a clustered pattern.
+# This can be concluded from the plots as they show a rapid increase on the accummulated distance, which means that points are very close together
+
+###STEP 3: Identify overlaping hotspots
+##Comming next
 
 
 #### STOPPED HERE####
