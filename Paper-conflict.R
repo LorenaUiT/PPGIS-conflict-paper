@@ -7,8 +7,12 @@ library(rgeos)
 library(grid)
 library(lattice) 
 library(mvabund)  ###glm
+library (MASS)  ###chi-sq
 library(spatstat)
 library(maptools) ##to create window to use in spatstat
+library(graphics) ## pairs function
+library(dbscan)   ## to calculate distance between clusters and find out how many clusters there are
+library(sm) ## to compare point densities of different user groups
 
 #options(stringsAsFactors=FALSE) # turn off automatic factor coersion
 options(scipen=9999)            # turn off plotting axis lables in scientific notation
@@ -72,34 +76,29 @@ plot(pointES,col=factor(pointES$origin),add=TRUE)
 plot(pointES,col=factor(pointES$category2c),add=TRUE)
 plot(pointES,col=factor(pointES$type),add=TRUE)
 pointES.values<-subset(pointES,pointES@data$type=="placevalues")
+pointES.values@data$category2c<-factor(pointES.values@data$category2c)
 pointES.pref<-subset(pointES,!is.na(pointES@data$preference))
+pointES.pref@data$category2c<-factor(pointES.pref@data$category2c)
 
-#### GLM ####
+#### Chi-square ####
 #### Check whether there are differences in place values and preferences between user groups
-## glm using mvabund library
+## 
 # values
-pointES.values.table<-dcast(pointES.values@data,origin~category2c)
+pointES.values.table<-table(pointES.values@data$origin,pointES.values@data$category2c)
 pointES.values.table<-subset(pointES.values.table[-4,]) ## Deleting the last row for origin=NA
-values<-mvabund(pointES.values.table[,2:13])
-origin<-pointES.values.table$origin
-values.nb <- manyglm(values ~ origin, family="negative.binomial") 
-anova(values.nb,p.uni="adjusted") ### Origin does not explain the variance in place values
-plot(values.nb)
-coef(values.nb)
-residuals(values.nb)
-values.mvformula<-mvformula(values~origin)
-plot(values.mvformula)
+chisq.test(pointES.values.table) ### p<0.05 --> user groups differ in place values
+chisq.test(pointES.values.table)$stdres
 
 # preferences
-pointES.pref.table<-dcast(pointES@data,origin~category2c[type=="preferences"])
+pointES.pref.table<-table(pointES.pref@data$origin,pointES.pref@data$category2c)
 pointES.pref.table<-subset(pointES.pref.table[-4,]) ## Deleting the last row for origin=NA
-preferences<-mvabund(pointES.pref.table[,2:8])
-origin<-pointES.pref.table$origin
-pref.nb <- manyglm(preferences ~ origin, family="negative.binomial") 
-anova(pref.nb,p.uni="adjusted") ### Origin does not explain the variance in place values
-plot(pref.nb)
-preferences.mvformula<-mvformula(preferences~origin)
-plot(preferences.mvformula)
+chisq.test(pointES.pref.table) ###there are >20% of <5 values, chi-sq is not optimal
+chisq.test(pointES.pref.table)$stdres
+kruskal.test(origin~category2c,data=pointES.pref@data) ### p<0.05 --> user groups differ in preferences
+
+
+#### COMPARE DENSITIES OF USER GROUPS  #####
+### To see whether they use the same areas or not.
 
 
 
@@ -114,6 +113,7 @@ m<-droplevels(m)
 
 pointES.values.ppp<-ppp(x=pointES.values@coords[,1],y=pointES.values@coords[,2], window = window,marks = m)
 is.multitype(pointES.values.ppp) ##Says true when there is a single mark
+pointES.values.ppp<-subset(pointES.values.ppp[pointES.values.ppp$marks$origin!="NA"])
 pointES.values.ppp$n/sum(sapply(slot(PAbufferdis, "polygons"), slot, "area")) ### Calculates average intensity of markers
 plot(pointES.values.ppp)
 plot(Kest(pointES.values.ppp)) ## How do I interpret this???
@@ -145,23 +145,134 @@ plot(Gest(pointES.values.ppp[pointES.values.ppp$marks$origin=="International"]))
 # Plots show that bG(r) > Gpois(r) suggest a clustered pattern.
 # This can be concluded from the plots as they show a rapid increase on the accummulated distance, which means that points are very close together
 
-
-
 ## We cannot use MLE for poisson because our points are not completely independent (is this right?)
 ## MLE tests covariates?
 
-## Handling point patterns with marks:
-MarkCorrValues<-markcrosscorr(pointES.values.ppp,correction = "translate",method = "density")
-plot(MarkCorrValues) ## Can't understand what it means
+#### COMPARE DENSITIES OF USER GROUPS  #####
+### To see whether they use the same areas or not.
+nn.sim = vector()
+P.r = pointES.values.ppp
+marks(P.r) = pointES.values.ppp$marks$origin
+for(i in 1:999){
+  marks(P.r) = sample(pointES.values.ppp$marks$origin,replace = FALSE)  # Reassign labels at random, point locations don't change
+  nn.sim[i] = mean(nncross(subset(P.r[P.r$marks=="Local"]),subset(P.r[P.r$marks=="Domestic"]))$dist)
+}
 
-#### WORKING HERE!!
+hist(nn.sim,breaks=30)
+abline(v=mean(nncross(pointES.values.ppp[pointES.values.ppp$marks$origin=="Local"],pointES.values.ppp[pointES.values.ppp$marks$origin=="Domestic"])$dist),col="red")
+mean(nncross(pointES.values.ppp[pointES.values.ppp$marks$origin=="Local"],pointES.values.ppp[pointES.values.ppp$marks$origin=="Domestic"])$dist)
+# Compute empirical cumulative distribution
+nn.sim.ecdf = ecdf(nn.sim)
+plot(nn.sim.ecdf)
+# See how the original stat compares to the simulated distribution
+nn.sim.ecdf(mean(nncross(subset(P.r[P.r$marks=="Local"]),subset(P.r[P.r$marks=="Domestic"]))$dist)) 
+summary(nn.sim.ecdf)
+
+
+
+
+
+
+
+nn.sim1 = vector()
+P.r = pointES.values.ppp
+marks(P.r) = pointES.values.ppp$marks$origin
+for(i in 1:999){
+  marks(P.r) = sample(pointES.values.ppp$marks$origin,replace = FALSE)  # Reassign labels at random, point locations don't change
+  nn.sim1[i] = mean(nncross(subset(P.r[P.r$marks=="Local"]),subset(P.r[P.r$marks=="International"]))$dist)
+}
+
+hist(nn.sim1,breaks=30)
+abline(v=mean(nncross(pointES.values.ppp[pointES.values.ppp$marks$origin=="Local"],pointES.values.ppp[pointES.values.ppp$marks$origin=="International"])$dist),col="red")
+mean(nncross(pointES.values.ppp[pointES.values.ppp$marks$origin=="Local"],pointES.values.ppp[pointES.values.ppp$marks$origin=="International"])$dist)
+# Compute empirical cumulative distribution
+nn.sim1.ecdf = ecdf(nn.sim1)
+plot(nn.sim1.ecdf)
+# See how the original stat compares to the simulated distribution
+nn.sim1.ecdf(mean(nncross(subset(P.r[P.r$marks=="Local"]),subset(P.r[P.r$marks=="International"]))$dist)) 
+summary(nn.sim1.ecdf)
+
+
+
+
+
+
+nn.sim2 = vector()
+P.r = pointES.values.ppp
+marks(P.r) = pointES.values.ppp$marks$origin
+for(i in 1:999){
+  marks(P.r) = sample(pointES.values.ppp$marks$origin,replace = FALSE)  # Reassign labels at random, point locations don't change
+  nn.sim2[i] = mean(nncross(subset(P.r[P.r$marks=="Domestic"]),subset(P.r[P.r$marks=="International"]))$dist)
+}
+
+hist(nn.sim2,breaks=30)
+abline(v=mean(nncross(pointES.values.ppp[pointES.values.ppp$marks$origin=="Domestic"],pointES.values.ppp[pointES.values.ppp$marks$origin=="International"])$dist),col="red")
+mean(nncross(pointES.values.ppp[pointES.values.ppp$marks$origin=="Domestic"],pointES.values.ppp[pointES.values.ppp$marks$origin=="International"])$dist)
+# Compute empirical cumulative distribution
+nn.sim2.ecdf = ecdf(nn.sim2)
+plot(nn.sim2.ecdf)
+# See how the original stat compares to the simulated distribution
+nn.sim2.ecdf(mean(nncross(subset(P.r[P.r$marks=="Domestic"]),subset(P.r[P.r$marks=="International"]))$dist)) 
+summary(nn.sim2.ecdf)
+
+
+
 ###STEP 3: Identify overlaping hotspots
-library(chemometrics)
 
-require(robustbase)
-pointES.values.ppp.xy<-cbind(pointES.values.ppp$x,pointES.values.ppp$y)
-values.mcd=covMcd(pointES.values.ppp.xy)
-drawMahal(pointES.values.ppp.xy,center=values.mcd$center,covariance=values.mcd$cov,quantile=0.5)
+## Calculate distance between clusters so we can use it in the dbscan function (eps)
+## K=2*dimension-1
+## to determine eps: http://www.sthda.com/english/wiki/dbscan-density-based-clustering-for-discovering-clusters-in-large-datasets-with-noise-unsupervised-machine-learning
+kNNdist(pointES.values@coords,k=3)
+kNNdistplot(pointES.values@coords,k=3) ### eps is around 1100
+
+pointES.values.dbscan<-dbscan(pointES.values@coords,eps = 1100,minPts = 10)
+plot(pointES.values, col=pointES.values.dbscan$cluster,main="Value clusters")
+text(polygon.values,labels=getSpPPolygonsIDSlots(polygon.values),cex=4)
+plot(PA,add=TRUE)
+
+
+
+# add a column called cluster to the data frame of each user group values
+pointES.values@data$cluster<-pointES.values.dbscan$cluster
+pointES.values<-subset(pointES.values,pointES.values@data$origin!="NA")
+pointES.values@data$origin<-droplevels(pointES.values@data$origin)
+
+
+
+## Create polygons with each cluster identified in dbscan
+
+polygon.values<-SpatialPolygons(list(),proj4string = pointES.values@proj4string)
+
+for (  i in unique(pointES.values@data[,18])[unique(pointES.values@data[,18])!=0]) {
+  polygon.values.hull<-gConvexHull(pointES.values[pointES.values@data$cluster==i,])
+  polygon.values.hull@polygons[[1]]@ID=as.character(i)
+  polygon.values<-spRbind(polygon.values,polygon.values.hull)
+
+  }
+
+
+plot(polygon.values,main="Value clusters",col=1:14)
+text(polygon.values,labels=getSpPPolygonsIDSlots(polygon.values),cex=4)
+plot(PA,add=TRUE)
+
+
+## Compare categories of each user group in each polygon
+
+for ( i in unique(pointES.values@data$cluster)){
+  pointES.values.clusters<-table(pointES.values@data$origin[pointES.values@data$cluster==i],pointES.values@data$category2c[pointES.values@data$cluster==i])
+  print(paste("Overlapping with local polygons in cluster no", i))
+  if(!is.na(kruskal.test(origin~category2c,data=subset(pointES.values@data,pointES.values@data$cluster==i))$p.value)){
+    if(kruskal.test(origin~category2c,data=subset(pointES.values@data,pointES.values@data$cluster==i))$p.value<0.05){
+      print(pointES.values.clusters)
+      print(chisq.test(pointES.values.clusters)$stdres)
+      print(kruskal.test(origin~category2c,data=subset(pointES.values@data,pointES.values@data$cluster==i)))
+    }
+  }  else
+    print(paste("Cluster",i,"not significantly different"))
+}
+
+
+
 
 
 
@@ -211,147 +322,147 @@ plot(Gest(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="International"]))
 # Plots show that bG(r) > Gpois(r) suggest a clustered pattern.
 # This can be concluded from the plots as they show a rapid increase on the accummulated distance, which means that points are very close together
 
+
+#### COMPARE DENSITIES OF USER GROUPS  #####
+### To see whether they use the same areas or not.
+nn.sim3 = vector()
+P.rp = pointES.pref.ppp
+marks(P.rp) = pointES.pref.ppp$marks$origin
+for(i in 1:999){
+  marks(P.rp) = sample(pointES.pref.ppp$marks$origin,replace = FALSE)  # Reassign labels at random, point locations don't change
+  nn.sim3[i] = mean(nncross(subset(P.rp[P.rp$marks=="Local"]),subset(P.rp[P.rp$marks=="Domestic"]))$dist)
+}
+
+hist(nn.sim3,breaks=30)
+abline(v=mean(nncross(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Local"],pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Domestic"])$dist),col="red")
+mean(nncross(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Local"],pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Domestic"])$dist)
+# Compute empirical cumulative distribution
+nn.sim3.ecdf = ecdf(nn.sim)
+plot(nn.sim3.ecdf)
+# See how the original stat compares to the simulated distribution
+nn.sim3.ecdf(mean(nncross(subset(P.rp[P.rp$marks=="Local"]),subset(P.rp[P.rp$marks=="Domestic"]))$dist)) 
+summary(nn.sim3.ecdf)
+
+
+
+
+
+
+
+nn.sim4 = vector()
+P.rp = pointES.pref.ppp
+marks(P.rp) = pointES.pref.ppp$marks$origin
+for(i in 1:999){
+  marks(P.rp) = sample(pointES.pref.ppp$marks$origin,replace = FALSE)  # Reassign labels at random, point locations don't change
+  nn.sim4[i] = mean(nncross(subset(P.rp[P.rp$marks=="Local"]),subset(P.rp[P.rp$marks=="International"]))$dist)
+}
+
+hist(nn.sim4,breaks=30)
+abline(v=mean(nncross(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Local"],pointES.pref.ppp[pointES.pref.ppp$marks$origin=="International"])$dist),col="red")
+mean(nncross(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Local"],pointES.pref.ppp[pointES.pref.ppp$marks$origin=="International"])$dist)
+# Compute empirical cumulative distribution
+nn.sim4.ecdf = ecdf(nn.sim1)
+plot(nn.sim4.ecdf)
+# See how the original stat compares to the simulated distribution
+nn.sim4.ecdf(mean(nncross(subset(P.rp[P.rp$marks=="Local"]),subset(P.rp[P.rp$marks=="International"]))$dist)) 
+summary(nn.sim4.ecdf)
+
+
+
+
+
+
+nn.sim5 = vector()
+P.rp = pointES.pref.ppp
+marks(P.rp) = pointES.pref.ppp$marks$origin
+for(i in 1:999){
+  marks(P.rp) = sample(pointES.pref.ppp$marks$origin,replace = FALSE)  # Reassign labels at random, point locations don't change
+  nn.sim5[i] = mean(nncross(subset(P.rp[P.rp$marks=="Domestic"]),subset(P.rp[P.rp$marks=="International"]))$dist)
+}
+
+hist(nn.sim5,breaks=30)
+abline(v=mean(nncross(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Domestic"],pointES.pref.ppp[pointES.pref.ppp$marks$origin=="International"])$dist),col="red")
+mean(nncross(pointES.pref.ppp[pointES.pref.ppp$marks$origin=="Domestic"],pointES.pref.ppp[pointES.pref.ppp$marks$origin=="International"])$dist)
+# Compute empirical cumulative distribution
+nn.sim5.ecdf = ecdf(nn.sim2)
+plot(nn.sim5.ecdf)
+# See how the original stat compares to the simulated distribution
+nn.sim5.ecdf(mean(nncross(subset(P.rp[P.rp$marks=="Domestic"]),subset(P.rp[P.rp$marks=="International"]))$dist)) 
+summary(nn.sim5.ecdf)
+
+
+
+
+
+
+
 ###STEP 3: Identify overlaping hotspots
-##Comming next
+## For this I will separate points in three layers (user types)
+pointES.pref.local<-subset(pointES.pref,pointES.pref@data$origin=="Local")
+pointES.pref.dom<-subset(pointES.pref,pointES.pref@data$origin=="Domestic")
+pointES.pref.inte<-subset(pointES.pref,pointES.pref@data$origin=="International")
 
 
-#### STOPPED HERE####
+plot(PA,main="Preferences of Locals")
+plot(pointES.pref.local,add=TRUE,pch=2)
+plot(PA,main="Preferences of Domestic")
+plot(pointES.pref.dom,add=TRUE,pch=1)
+plot(PA,main="Preferences of Internationals")
+plot(pointES.pref.inte,add=TRUE,pch=3)
 
 
+## Calculate distance between clusters so we can use it in the dbscan function (eps)
+## K=2*dimension-1
+kNNdist(pointES.pref@coords,k=3)
+kNNdistplot(pointES.pref@coords,k=3)
 
-#### MAPS ####
-## Create a grid to be used for preference analysis
-grid<-raster(extent(PAbuffer)) ## create a raster
-proj4string(grid)<-proj4string(PAbuffer)## put the same resolution as the buffer layer
-res(grid)<-2000 ## choose resolution
-gridpolygon<-rasterToPolygons(grid) ##transform the raster into a polygon
-gridbuffer<-intersect(PAbuffer,gridpolygon)
-plot(gridbuffer)
+pointES.pref.dbscan<-dbscan(pointES.pref@coords,eps = 2500,minPts = 10)
+plot(PA,main="Preference clusters")
+plot(pointES.pref, col=pointES.pref.dbscan$cluster,add=TRUE)
 
 
-#### Create a map for development index ####
+# add a column called cluster to the data frame of each user group preferences
+pointES.pref@data$cluster<-pointES.pref.dbscan$cluster
 
-function.dev.index <- function(currorigin, preference.positive, preference.negative, grid.size){
-  pointES.pref.origin <- subset(pointES.pref, origin==currorigin)
-  pos <- subset(pointES.pref.origin, preference==preference.positive)
-  neg <- subset(pointES.pref.origin, preference==preference.negative)
-  res(grid)<-grid.size
-  posRast <- rasterize(pos, grid, fun="count")
-  negRast <- rasterize(neg, grid, fun="count")
-  outRast <- (posRast-negRast)*(posRast+negRast)
-  writeRaster(outRast, filename=paste0(currorigin, "_" , preference.positive),overwrite=TRUE)
-  return(outRast)
+
+## Create polygons with each cluster identified in dbscan
+
+polygon.pref<-SpatialPolygons(list(),proj4string = pointES.pref@proj4string)
+
+for (  i in unique(pointES.pref@data[,18])[unique(pointES.pref@data[,18])!=0]) {
+  polygon.pref.hull<-gConvexHull(pointES.pref[pointES.pref@data$cluster==i,])
+  polygon.pref.hull@polygons[[1]]@ID=as.character(i)
+  polygon.pref<-spRbind(polygon.pref,polygon.pref.hull)
+  
 }
 
-devindexRastLocal <- function.dev.index("Local", "development", "nodevelopment",2000)
-devindexRastDom <- function.dev.index("Domestic", "development", "nodevelopment",2000)
-devindexRastInter <- function.dev.index("International", "development", "nodevelopment",2000)
+
+plot(PA,main="Preference clusters")
+plot(polygon.pref,col=getSpPPolygonsIDSlots(polygon.pref),add=TRUE)
+text(polygon.pref,labels=getSpPPolygonsIDSlots(polygon.pref),cex=4)
+
+pointES.pref<-subset(pointES.pref,pointES.pref@data$origin!="NA")
+pointES.pref@data$origin<-droplevels(pointES.pref@data$origin)
 
 
 
-#### Create maps for development and no development separately####
+## Compare categories of each user group in each polygon
 
-# development
-function.develop <- function(currorigin, preference.positive, grid.size){
-  pointES.pref.origin <- subset(pointES.pref, origin==currorigin)
-  pos <- subset(pointES.pref.origin, preference==preference.positive)
-  res(grid)<-grid.size
-  posRast <- rasterize(pos, grid, fun="count")
-  outRast <- posRast
-  writeRaster(outRast, filename=paste0(currorigin, "_" , preference.positive),overwrite=TRUE)
-  return(outRast)
+for ( i in unique(pointES.pref@data$cluster)){
+  pointES.pref.clusters<-table(pointES.pref@data$origin[pointES.pref@data$cluster==i],pointES.pref@data$preference[pointES.pref@data$cluster==i])
+  print(paste("Overlapping with cluster no", i))
+  if(!is.na(kruskal.test(origin~preference,data=subset(pointES.pref@data,pointES.pref@data$cluster==i))$p.value)){
+    if(kruskal.test(origin~preference,data=subset(pointES.pref@data,pointES.pref@data$cluster==i))$p.value<0.05){
+      print(pointES.pref.clusters)
+      print(chisq.test(pointES.pref.clusters)$stdres)
+      print(kruskal.test(origin~preference,data=subset(pointES.pref@data,pointES.pref@data$cluster==i)))
+    }
+  }  else
+    print(paste("Cluster",i,"not significantly different"))
 }
 
-developRastLocal <- function.develop("Local", "development",2000)
-developRastDom <- function.develop("Domestic", "development",2000)
-developRastInter <- function.develop("International", "development",2000)
-
-# no development
-function.nodevelop <- function(currorigin, preference.negative, grid.size){
-  pointES.pref.origin <- subset(pointES.pref, origin==currorigin)
-  neg <- subset(pointES.pref.origin, preference==preference.negative)
-  res(grid)<-grid.size
-  negRast <- rasterize(neg, grid, fun="count")
-  outRast <- negRast
-  writeRaster(outRast, filename=paste0(currorigin, "_" , preference.negative),overwrite=TRUE)
-  return(outRast)
-}
-
-nodevelopRastLocal <- function.nodevelop("Local", "nodevelopment",2000)
-nodevelopRastDom <- function.nodevelop("Domestic", "nodevelopment",2000)
-nodevelopRastInter <- function.nodevelop("International", "nodevelopment",2000)
-
-# Plots
-par(mfrow=c(2,3))
-plot(developRastLocal$preference,main="Local development")
-plot(PAbuffer,add=TRUE)
-plot(developRastDom$preference,main="Domestic development")
-plot(PAbuffer,add=TRUE)
-plot(developRastInter$preference,main="International development")
-plot(PAbuffer,add=TRUE)
-plot(nodevelopRastLocal$preference,main="Local nodevelopment")
-plot(PAbuffer,add=TRUE)
-plot(nodevelopRastDom$preference,main="Domestic nodevelopment")
-plot(PAbuffer,add=TRUE)
-plot(nodevelopRastInter$preference,main="International nodevelopment")
-plot(PAbuffer,add=TRUE)
-
-### Create maps for contrasting development preferences between different user groups (prodev vs.against dev)
-devRast.conflict.LD<-developRastLocal*((-1)*nodevelopRastDom)
-devRast.conflict.LI<-developRastLocal*((-1)*nodevelopRastInter)
-devRast.conflict.DL<-developRastDom*((-1)*nodevelopRastLocal)
-devRast.conflict.DI<-developRastDom*((-1)*nodevelopRastInter)
-devRast.conflict.IL<-developRastInter*((-1)*nodevelopRastLocal)
-devRast.conflict.ID<-developRastInter*((-1)*nodevelopRastDom)
-
-par(mfrow=c(3,3))
-plot(devindexRastLocal$preference,main="Local dev index")
-plot(PAbuffer,add=TRUE)
-plot(devRast.conflict.LD$preference,main="Local dev vs. Dom nodev")
-plot(PAbuffer,add=TRUE)
-plot(devRast.conflict.LI$preference,main="Local dev vs. Inter nodev")
-plot(PAbuffer,add=TRUE)
-plot(devRast.conflict.DL$preference,main="Dom dev vs. Local nodev")
-plot(PAbuffer,add=TRUE)
-plot(devindexRastDom$preference,main="Dom dev index")
-plot(PAbuffer,add=TRUE)
-plot(devRast.conflict.DI$preference,main="Dom dev vs. Inter nodev")
-plot(PAbuffer,add=TRUE)
-plot(devRast.conflict.IL$preference,main="Inter dev vs. Local nodev")
-plot(PAbuffer,add=TRUE)
-plot(devRast.conflict.ID$preference,main="Inter dev vs. Dom nodev")
-plot(PAbuffer,add=TRUE)
-plot(devindexRastInter$preference,main="Inter dev index")
-plot(PAbuffer,add=TRUE)
-
-#### Histogram for preference frequencies ####
-
-histogram(~category2c|origin,data=subset(pointES.pref@data, !pointES.pref@data$origin=="NA"),
-          index.cond=list(c(3,1,2)),layout=c(1,3))
 
 
-#### Convert grid rasters to polygons to import them into ArcGIS/Qgis ####
-devindexPolyLocal<-rasterToPolygons(devindexRastLocal)
-devindexPolyDom<-rasterToPolygons(devindexRastDom)
-devindexPolyInter<-rasterToPolygons(devindexRastInter)
-devPoly.conflict.LD<-rasterToPolygons(devRast.conflict.LD)
-devPoly.conflict.LI<-rasterToPolygons(devRast.conflict.LI)
-devPoly.conflict.DL<-rasterToPolygons(devRast.conflict.DL)
-devPoly.conflict.DI<-rasterToPolygons(devRast.conflict.DI)
-devPoly.conflict.IL<-rasterToPolygons(devRast.conflict.IL)
-devPoly.conflict.ID<-rasterToPolygons(devRast.conflict.ID)
-
-
-writeOGR(devindexPolyLocal,"Preference maps","devindexPolyLocal",driver="ESRI Shapefile")
-writeOGR(devindexPolyDom,"Preference maps","devindexPolyDom",driver="ESRI Shapefile")
-writeOGR(devindexPolyInter,"Preference maps","devindexPolyInter",driver="ESRI Shapefile")
-writeOGR(devPoly.conflict.LD,"Preference maps","devPoly.conflict.LD",driver="ESRI Shapefile")
-writeOGR(devPoly.conflict.LI,"Preference maps","devPoly.conflict.LI",driver="ESRI Shapefile")
-writeOGR(devPoly.conflict.DL,"Preference maps","devPoly.conflict.DL",driver="ESRI Shapefile")
-writeOGR(devPoly.conflict.DI,"Preference maps","devPoly.conflict.DI",driver="ESRI Shapefile")
-writeOGR(devPoly.conflict.IL,"Preference maps","devPoly.conflict.IL",driver="ESRI Shapefile")
-writeOGR(devPoly.conflict.ID,"Preference maps","devPoly.conflict.ID",driver="ESRI Shapefile")
-writeOGR(pointES.pref,"Preference maps","pointES.pref", driver="ESRI Shapefile")
 
 
 
